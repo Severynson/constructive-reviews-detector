@@ -19,8 +19,8 @@ BASE_URL = "https://api.content.tripadvisor.com/api/v1"
 REVIEWS_ENDPOINT = f"{BASE_URL}/location/{{location_id}}/reviews"
 
 DATA_DIR = Path("data")
-TO_CHECK_PATH = DATA_DIR / "to_check_locations.csv"
-CHECKED_PATH = DATA_DIR / "checked_locations.csv"
+TO_CHECK_PATH = DATA_DIR / "to_check_locations.tsv"
+CHECKED_PATH = DATA_DIR / "checked_locations.tsv"
 REVIEWS_OUT_PATH = DATA_DIR / "tripadvisor_reviews.csv"
 
 
@@ -37,14 +37,6 @@ def sanitize(text: str) -> str:
     text_no_newlines = str(text).replace("\n", " ").replace("\r", " ")
     # Replace the pipe delimiter as it's used for columns
     return text_no_newlines.replace("|", ";").strip()
-
-
-def handle_response(resp: requests.Response) -> dict:
-    """Parse JSON or raise error."""
-    if resp.status_code in (429, 403):
-        print(f"⚠️ API returned {resp.status_code}.")
-    resp.raise_for_status()
-    return resp.json()
 
 
 def extract_location_id_from_url(url: str) -> str | None:
@@ -69,7 +61,7 @@ def load_locations_csv(path: Path) -> List[Dict[str, str]]:
 
     items: List[Dict[str, str]] = []
     with path.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             title = (row.get("title") or "").strip()
             url = (row.get("url") or "").strip()
@@ -86,7 +78,7 @@ def load_checked_titles_and_urls(path: Path) -> Tuple[Set[str], Set[str]]:
         return titles, urls
 
     with path.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             t = (row.get("title") or "").strip()
             u = (row.get("url") or "").strip()
@@ -102,7 +94,7 @@ def append_checked_location(path: Path, title: str, url: str) -> None:
     file_exists = path.exists()
 
     with path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["title", "url"])
+        writer = csv.DictWriter(f, fieldnames=["title", "url"], delimiter="\t")
         if not file_exists:
             writer.writeheader()
         writer.writerow({"title": title, "url": url})
@@ -113,10 +105,10 @@ def append_checked_location(path: Path, title: str, url: str) -> None:
 # =========================================================
 
 
-def get_location_reviews(location_id: str, language: str = "en") -> List[dict]:
+def get_location_reviews(location_id: str, language: str = "en", max_retries: int = 3) -> List[dict]:
     """
-    Fetch up to 5 most recent reviews for a given location_id,
-    as per Tripadvisor Content API docs.
+    Fetch up to 5 most recent reviews for a given location_id.
+    Includes retry logic for rate limiting (429 errors).
     """
     url = REVIEWS_ENDPOINT.format(location_id=location_id)
 
@@ -130,11 +122,27 @@ def get_location_reviews(location_id: str, language: str = "en") -> List[dict]:
         "Referer": "https://github.com",
     }
 
-    # No timeout (official API, not web scraping)
-    resp = requests.get(url, params=params, headers=headers)
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, params=params, headers=headers)
 
-    data = handle_response(resp)
-    return data.get("data") or []
+            if resp.status_code == 429:
+                print(f"   ... Rate limited (429). Waiting 60s before retry {attempt + 1}/{max_retries}")
+                time.sleep(60)
+                continue  # Go to the next attempt
+
+            resp.raise_for_status()  # Raise HTTPError for other bad responses (4xx or 5xx)
+
+            data = resp.json()
+            return data.get("data") or []
+
+        except requests.exceptions.RequestException as e:
+            print(f"   ... An error occurred during request: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5) # Wait a bit before retrying on network errors
+
+    print(f"   ... Failed to fetch reviews for location {location_id} after {max_retries} attempts.")
+    return []
 
 
 # =========================================================
