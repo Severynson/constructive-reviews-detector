@@ -13,7 +13,7 @@ load_dotenv()
 #  CONFIG
 # =========================================================
 
-API_KEY = os.environ["TRIPADVISOR_API_KEY"]  # API key from environment
+TRIPADVISOR_API_KEY = os.environ["TRIPADVISOR_API_KEY"]  # API key from environment
 
 BASE_URL = "https://api.content.tripadvisor.com/api/v1"
 REVIEWS_ENDPOINT = f"{BASE_URL}/location/{{location_id}}/reviews"
@@ -113,7 +113,7 @@ def get_location_reviews(location_id: str, language: str = "en", max_retries: in
     url = REVIEWS_ENDPOINT.format(location_id=location_id)
 
     params = {
-        "key": API_KEY,
+        "key": TRIPADVISOR_API_KEY,
         "language": language,
     }
 
