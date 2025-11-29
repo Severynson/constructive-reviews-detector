@@ -21,72 +21,152 @@ from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 
-DEFAULT_MODEL = "gpt-5-nano"
+DEFAULT_MODEL = "gpt-5.1"
+BATCH_SIZE = 20
 DEFAULT_INPUT = Path("data/tripadvisor_reviews.csv")
 DEFAULT_OUTPUT = Path("data/tripadvisor_reviews_labeled.csv")
-# SYSTEM_PROMPT = (
-#     "You are a strict classifier of customer reviews. Your task is to decide whether a review contains "
-#     "specific, actionable information that a business can use to improve its operations."
-#     ""
-#     "Return **1** ONLY if the review includes concrete, factual details such as:"
-#     '- speed of service'
-#     '- staff behavior, accuracy or errors (e.g. "waiter forgot to bring coffee", "hostess sat us at the wrong table", "cashier rolled their eyes at us")'
-#     '- quality specifics (e.g., "food was cold", "burger was undercooked", "coffee tasted burnt", "latte was watery")'
-#     '- environment details (e.g., "music was too loud", "bathroom was dirty")'
-#     '- pacing issues (e.g., "drinks came out long after our food")'
-#     '- portion specifics (e.g., "portion much smaller than last time", "order was missing the side salad")'
-#     ""
-#     "Return **0** if the review is:"
-#     '- vague (e.g., "food was bad", "terrible place", "amazing experience", "I love the great history of this place")'
-#     "- purely emotional or sentimental"
-#     "- a general opinion without actionable details"
-#     "- unclear whether any useful information is given"
-#     ""
-#     "Even if a review primarily expresses all the traits from the list to Return **0** BUT also includes at least one clear specific detail, return **1**."
-#     ""
-#     "When unsure, ALWAYS choose **0**."
-#     ""
-#     "Respond with a short sentence where you explain what traits from the list for 0 or 1 did you find, and ALWAYS finish your response with a single character: **1** or **0**."
-# )
 
-SYSTEM_PROMPT = (
-    "You are a strict classifier of customer reviews. Your task is to decide whether a review contains "
-    "specific, actionable information that a business can use to improve its operations.\n\n"
-    "Return **1** ONLY if the review includes concrete, factual, operational details such as:\n"
-    "- Speed of service (e.g., 'waited 20 minutes', 'service was slow')\n"
-    "- Staff behavior, accuracy, attentiveness, or errors (e.g., 'waiter forgot the coffee', "
-    "'hostess sat us at the wrong table', 'cashier rolled their eyes', 'server checked on us frequently')\n"
-    "- Quality specifics of food or drink (e.g., 'food was cold', 'burger undercooked', "
-    "'coffee tasted burnt', 'latte was watery', 'steak overcooked compared to medium rare')\n"
-    "- Environment or cleanliness details (e.g., 'music too loud', 'bathroom dirty', "
-    "'AC not working', 'tables were sticky')\n"
-    "- Pacing and timing issues (e.g., 'drinks came out long after the food', "
-    "'dessert took 15 minutes after ordering')\n"
-    "- Portion or accuracy specifics (e.g., 'portion smaller than last time', 'missing side salad')\n"
-    "- Menu item feedback with specific qualities (positive or negative), such as taste, temperature, or preparation "
-    "(e.g., 'salmon was perfectly seasoned', 'cocktail was watered down', 'fries were soggy')\n"
-    "- Operational or logistics problems (e.g., 'credit card reader didn’t work', "
-    "'reservation not found', 'ran out of two menu items', 'seating next to drafty window')\n"
-    "- Accessibility or accommodation issues (e.g., 'ramp was blocked', 'lighting too dim to read menu')\n"
-    "- Disturbances caused by other customers that affect the experience (e.g., 'loud group arguing, staff didn't intervene')\n\n"
-    "Return **0** if the review is:\n"
-    "- Vague (e.g., 'food was bad', 'service needs work', 'great place', 'prices were high')\n"
-    "- Purely emotional or sentimental (e.g., 'I was so disappointed', 'we had a wonderful time')\n"
-    "- General praise or complaints without details (e.g., 'I loved the dish', 'wine list was great', "
-    "'staff were fantastic', 'wait times need improvement')\n"  # without the exact time - it is too vague to be actionable info
-    "- Narrative or personal context without actionable content (e.g., 'I came here with my friend', "
-    "'we were celebrating a birthday')\n"
-    "- Historical, cultural, or location commentary (e.g., 'I love the history of this place', "
-    "'nice local spot')\n"
-    "- Menu listing without evaluation (e.g., 'they offer vegan options', 'they have wines from Lodi')\n"
-    "- Aesthetic impressions lacking a problem (e.g., 'cute decor', 'old-school vibe')\n"
-    "- Statements implying issues without specifics (e.g., 'service needs improvement', 'food could be better')\n\n"
-    "Even if a review contains many traits from the Return 0 list BUT includes at least one clear, "
-    "specific, actionable detail from the Return 1 list, return **1**.\n\n"
-    "When unsure, ALWAYS choose **0**.\n\n"
-    "Respond with a short sentence explaining which traits from the lists you found, and ALWAYS finish "
-    "your response with a single character: **1** or **0**."
-)
+SYSTEM_PROMPT = """You are a strict classifier of customer reviews. Your task is to decide whether a review contains 
+specific, actionable information that a business can use to improve its operations.
+
+Return **1** ONLY if the review includes concrete, factual, operational details such as:
+
+- Speed of service 
+  (e.g., "waited 20 minutes", "service was much slower than usual", "quick service")
+
+- Staff behavior, accuracy, attentiveness, knowledge, or errors  
+  (e.g., "waiter forgot the coffee", "hostess sat us at the wrong table", 
+  "cashier rolled their eyes", "server checked on us frequently",
+  "barista didn’t know the menu", "server could not explain allergens",
+  "staff gave incorrect recommendations", "sommelier didn’t know basic pairings")
+
+- Quality specifics of food or drink  
+  (e.g., "food was cold", "burger undercooked", "coffee tasted burnt", 
+  "latte was watery", "steak overcooked compared to medium rare")
+
+- Environment, comfort, or cleanliness details  
+  (e.g., "music too loud", "bathroom dirty", "live music is a reason why I return",
+  "AC not working", "tables were sticky", "restaurant too cold/hot", 
+  "strong chemical smell", "chair uncomfortable", "ventilation poor")
+
+- Pacing and timing issues  
+  (e.g., "drinks came out long after the food", 
+  "dessert took 15 minutes after ordering", 
+  "appetizer arrived after the entree", 
+  "two dishes arrived 10 minutes apart")
+
+- Portion or accuracy specifics  
+  (e.g., "portion smaller than last time", "missing side salad", 
+  "ordered medium rare but got well-done")
+
+- Menu item feedback with specific, concrete qualities (positive or negative)  
+  that mention *what exactly* was good or bad about the item, such as taste details, 
+  texture, temperature, seasoning, portion size, or preparation
+  (e.g., "salmon was perfectly seasoned with a crispy skin", 
+  "cocktail was mostly ice and tasted watered down", 
+  "fries were soggy and under-salted").  
+  Generic statements like "the burger was yummy/tasty/decent/good/awful" WITHOUT further specifics 
+  should be treated as vague and classified as 0.
+
+- Operational or logistics problems  
+  (e.g., "credit card reader didn’t work", "reservation not found", 
+  "ran out of two menu items", "seating next to drafty window",
+  "website booking system glitched", "OpenTable confirmation didn’t register",
+  "waitlist process was confusing")
+
+- Accessibility or accommodation issues  
+  (e.g., "ramp was blocked", "lighting too dim to read menu", 
+  "bathroom too cramped for wheelchair")
+
+- Disturbances caused by other customers  
+  (e.g., "loud group arguing, staff didn’t intervene", 
+  "kids running around while staff ignored it")
+
+- Pricing accuracy and billing issues  
+  (e.g., "charged incorrectly", "item rang up $4 higher than menu price", 
+  "surprise service fee added", "portion too small for the price", 
+  "happy hour prices didn’t match the menu", "automatic tip added without warning")
+
+- Takeout or delivery issues  
+  (e.g., "takeout order missing items", "packaging leaked", 
+  "food spilled in the bag", "delivery took 1 hour instead of 20 minutes",
+  "container poorly sealed so fries were soggy")
+
+- Dietary or allergy accommodation problems  
+  (e.g., "gluten-free dish had croutons", "vegan item contained cheese", 
+  "allergen labels inaccurate", "server unsure about ingredients")
+
+- Menu clarity or accuracy problems  
+  (e.g., "menu hard to read in dim light", "description didn’t match dish", 
+  "menu outdated", "allergen icons incorrect", "items listed but unavailable")
+
+- Queueing, seating, and entrance issues  
+  (e.g., "had to wait 25 minutes despite reservation", 
+  "host skipped our turn", "stood at door for 5 minutes without greeting", 
+  "confusing entrance", "waiting line unorganized")
+
+- Parking or external access issues  
+  (e.g., "parking impossible", "valet lost keys", "no signage", 
+  "unsafe or poorly lit parking area")
+
+- Bussing, table turnover, and cleanup  
+  (e.g., "dirty plates sat for 20 minutes", "table not wiped before seating",
+  "crumbs on seat from previous guests")
+
+- Technology and digital experience problems  
+  (e.g., "Wi-Fi didn’t work", "QR code menu blurry", 
+  "tablet ordering system froze", "online ordering glitchy")
+
+- Layout, spacing, or seating ergonomics issues  
+  (e.g., "tables too close together", "bench too low for table height", 
+  "no space to move chair")
+
+- Odor or scent problems  
+  (e.g., "bathroom smelled bad", "strong cleaning chemical smell", 
+  "kitchen smell overwhelming dining room")
+
+- Consistency issues across visits  
+  (e.g., "portion smaller than last time", "quality dropped since last month",
+  "recipe changed and now less flavorful")
+
+- Safety concerns  
+  (e.g., "slippery floor", "broken step", "glass shard in food", 
+  "loose electrical cable near seating area")
+
+Return **0** if the review is:
+
+- Vague  
+  (e.g., "food was bad/good/tasty", "service needs work", 
+  "great place", "prices were high")
+
+- Purely emotional or sentimental without explaining details 
+  (e.g., "I was so disappointed", "we had a wonderful time")
+
+- General praise or complaints without details  
+  (e.g., "I loved the dish", "wine list was great", "staff were fantastic")
+
+- Narrative or personal context without actionable content  
+  (e.g., "I came here with my friend", "we were celebrating a birthday")
+
+- Historical, cultural, or location commentary  
+  (e.g., "I love the history of this place", "nice local spot")
+
+- Menu listing without evaluation  
+  (e.g., "they offer vegan options", "they have wines from Lodi")
+
+- Aesthetic impressions lacking a problem  
+  (e.g., "cute decor", "old-school vibe")
+
+- Statements implying issues without specifics  
+  (e.g., "service needs improvement", "food could be better")
+
+Even if a review contains many traits from the Return 0 list BUT includes at least one clear, 
+specific, actionable detail from the Return 1 list, return **1**.
+
+When unsure, ALWAYS choose **0**.
+
+Respond with a short sentence explaining which traits from the lists you found, and ALWAYS finish 
+your response with a single character: **1** or **0**."""
 
 
 def parse_args() -> argparse.Namespace:
@@ -127,10 +207,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def label_constructive(
-    client: OpenAI, model: str, title: str, text: str, retries: int = 3
-) -> str:
-    """Call the model to label a review. Returns "1" or "0"."""
+def label_constructive_batch(
+    client: OpenAI,
+    model: str,
+    items: list[tuple[str, str]],
+    retries: int = 3,
+) -> list[tuple[str, str]]:
+    """
+    Batch version of label_constructive.
+
+    items: list of (title, text)
+    returns: list of (label, llm_logic_log) in the same order.
+    """
+    # Build a single user prompt containing all reviews
+    review_blocks = []
+    for i, (title, text) in enumerate(items, start=1):
+        review_blocks.append(f"Review {i}:\nTitle: {title}\nReview: {text}")
+
+    user_content = (
+        "Classify each of the following reviews as constructive (1) or not (0).\n"
+        "For each review, respond on a separate line in this exact format:\n"
+        "Review <N>: <short explanation>  <label>\n"
+        "where <label> is a single character 1 or 0 as the LAST character on the line.\n\n"
+        + "\n\n".join(review_blocks)
+    )
+
     messages = [
         {
             "role": "system",
@@ -138,34 +239,37 @@ def label_constructive(
         },
         {
             "role": "user",
-            "content": f"Title: {title}; Review: {text}",
+            "content": user_content,
         },
     ]
 
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
-            # Responses API (supports prompt caching automatically for long, repeated prefixes)
-            response = client.responses.create(
+            response = client.chat.completions.create(
                 model=model,
-                input=messages,
+                messages=messages,
+                # max_completion_tokens=items.__len__() * 16,  # a few tokens per line
+                # temperature=0,
             )
+            full_response = (response.choices[0].message.content or "").strip()
 
-            # Adjusted for Responses API – check your client version; in recent SDKs this is valid:
-            llm_response = (response.output_text or "").strip()
-            label = llm_response[-1]
+            # Split into non-empty lines
+            lines = [ln.strip() for ln in full_response.splitlines() if ln.strip()]
 
-            if label.startswith("1"):
-                return ("1", llm_response)
-            if label.startswith("0"):
-                return ("0", llm_response)
+            if len(lines) != len(items):
+                raise ValueError(
+                    f"Expected {len(items)} lines, got {len(lines)}. Response was:\n{full_response}"
+                )
 
-            # Unexpected content: try again up to the retry budget.
-            last_error = ValueError(f"Unexpected model reply: {label!r}")
-            print(
-                f"Unexpected model reply on attempt {attempt}: {label!r}. Retrying...",
-                file=sys.stderr,
-            )
+            results: list[tuple[str, str]] = []
+            for line in lines:
+                label = line[-1]
+                if label not in {"0", "1"}:
+                    raise ValueError(f"Line does not end with 0 or 1: {line!r}")
+                results.append((label, line))
+
+            return results
 
         except Exception as exc:
             if attempt >= retries:
@@ -173,18 +277,14 @@ def label_constructive(
             last_error = exc
             wait_for = 2.0 * attempt
             print(
-                f"API call failed ({exc}). Retrying in {wait_for:.1f}s...",
+                f"Batch API call failed ({exc}). Retrying in {wait_for:.1f}s...",
                 file=sys.stderr,
             )
             time.sleep(wait_for)
             continue
 
-        if attempt < retries:
-            wait_for = 0.1 * attempt
-            time.sleep(wait_for)
-
     raise RuntimeError(
-        f"Failed to get a valid label after {retries} attempt(s): {last_error}"
+        f"Failed to get valid batch labels after {retries} attempt(s): {last_error}"
     )
 
 
@@ -231,6 +331,8 @@ def process_file(
         writer = csv.DictWriter(f_out, fieldnames=fieldnames, delimiter="|")
         writer.writeheader()
 
+        pending: list[tuple[dict, str, str]] = []  # (row, title, text)
+
         for idx, row in enumerate(reader, start=1):
             if limit and idx > limit:
                 break
@@ -240,21 +342,47 @@ def process_file(
 
             existing = (row.get("constructive") or "").strip()
             if not relabel and has_constructive and existing in {"0", "1"}:
-                label = existing
+                # No relabel needed; write row immediately.
+                row["constructive"] = existing
+                # Keep existing llm_logic_log if present, otherwise blank.
+                if not has_llm_logic_log:
+                    row["llm_logic_log"] = row.get("llm_logic_log", "")
+                writer.writerow(row)
             else:
-                label, llm_logic_log = label_constructive(
-                    client, model, title=title, text=text
-                )
+                # Queue for batch labeling
+                pending.append((row, title, text))
 
-            row["constructive"] = label
-            row["llm_logic_log"] = llm_logic_log
-            writer.writerow(row)
+                # If batch is full, flush it
+                if len(pending) >= BATCH_SIZE:
+                    batch_items = [(t, x) for (_, t, x) in pending]
+                    batch_results = label_constructive_batch(client, model, batch_items)
+
+                    for (row_pending, _, _), (label, llm_logic_log) in zip(
+                        pending, batch_results
+                    ):
+                        row_pending["constructive"] = label
+                        row_pending["llm_logic_log"] = llm_logic_log
+                        writer.writerow(row_pending)
+
+                    pending.clear()
 
             if sleep_seconds:
                 time.sleep(sleep_seconds)
 
             if idx % 25 == 0:
                 print(f"Labeled {idx} rows", file=sys.stderr)
+
+        # Flush any remaining pending rows after the loop
+        if pending:
+            batch_items = [(t, x) for (_, t, x) in pending]
+            batch_results = label_constructive_batch(client, model, batch_items)
+
+            for (row_pending, _, _), (label, llm_logic_log) in zip(
+                pending, batch_results
+            ):
+                row_pending["constructive"] = label
+                row_pending["llm_logic_log"] = llm_logic_log
+                writer.writerow(row_pending)
 
 
 def main() -> None:
