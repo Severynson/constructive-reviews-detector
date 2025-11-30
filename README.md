@@ -11,7 +11,7 @@ This project builds an end-to-end pipeline for **detecting constructive customer
 3. **Supervised training** of a BERT-style classifier on the labeled dataset
 4. **Local inference** using the fine-tuned classifier
 
-All TripAdvisor reviews in this project were collected by me and are stored in the `data/` folder (see [Dataset](##dataset) section).
+All TripAdvisor reviews in this project were collected by me and are stored in the `data/` folder (see [📊 Dataset](#-dataset)).
 
 ⸻
 
